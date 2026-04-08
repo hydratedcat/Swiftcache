@@ -1,3 +1,8 @@
+# Private / internal files
+.agent/
+SWIFTCACHE_TASK.md
+study-guide.md
+
 # Build artifacts
 build/
 *.o
