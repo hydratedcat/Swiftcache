@@ -5,6 +5,7 @@ study-guide.md
 
 # Build artifacts
 build/
+build_asan/
 *.o
 *.a
 *.so
