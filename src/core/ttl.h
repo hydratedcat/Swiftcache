@@ -10,7 +10,7 @@ class LRUCache;
 class TTLManager {
 public:
   void set_expiry(const std::string &key, int seconds);
-  bool is_expired(const std::string &key) const;
+  [[nodiscard]] bool is_expired(const std::string &key) const;
   void remove(const std::string &key);
   void cleanup_expired(LRUCache &cache);
 

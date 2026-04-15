@@ -27,8 +27,10 @@ add_executable(run_tests
     tests/test_store.cpp
     tests/test_lru.cpp
     tests/test_parser.cpp
+    tests/test_ttl.cpp
     src/core/store.cpp
     src/core/lru.cpp
+    src/core/ttl.cpp
     src/parser/command.cpp
 )
 target_link_libraries(run_tests GTest::GTest GTest::Main pthread)
