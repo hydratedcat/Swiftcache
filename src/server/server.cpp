@@ -1,5 +1,7 @@
 #include "server.h"
 
+#include "connection.h"
+
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -7,14 +9,16 @@
 
 #include <cstring>
 #include <iostream>
+#include <thread>
 
 // ---------------------------------------------------------------------------
 // Named constants — no magic numbers
 // ---------------------------------------------------------------------------
 namespace {
-constexpr size_t RECV_BUFFER_SIZE = 4096;
 constexpr int TTL_CLEANUP_INTERVAL_SECONDS = 1;
 constexpr int LISTEN_BACKLOG = SOMAXCONN;
+constexpr int SHUTDOWN_DRAIN_POLL_MS = 50;
+constexpr int SHUTDOWN_DRAIN_TIMEOUT_MS = 5000;
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -36,8 +40,7 @@ void Server::setup_socket() {
 
   // Allow immediate restart after crash — skip TIME_WAIT
   int opt = 1;
-  if (setsockopt(server_fd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) <
-      0) {
+  if (setsockopt(server_fd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
     close(server_fd_);
     throw std::runtime_error("setsockopt SO_REUSEADDR failed");
   }
@@ -59,7 +62,7 @@ void Server::setup_socket() {
 }
 
 // ---------------------------------------------------------------------------
-// start: bind socket, launch TTL cleanup thread, enter accept loop
+// start: bind socket, launch TTL cleanup thread, multi-threaded accept loop
 // ---------------------------------------------------------------------------
 void Server::start() {
   setup_socket();
@@ -76,7 +79,7 @@ void Server::start() {
     }
   });
 
-  // Single-threaded accept loop (Day 7 upgrades to thread-per-client)
+  // Multi-threaded accept loop: spawn one detached thread per client
   while (running_) {
     int client_fd = accept(server_fd_, nullptr, nullptr);
     if (client_fd < 0) {
@@ -85,140 +88,49 @@ void Server::start() {
       }
       continue;
     }
-    handle_client(client_fd);
-    close(client_fd);
+
+    // Each client gets its own thread; the Connection object tracks
+    // active_connections_ via RAII-style increment/decrement.
+    std::thread([this, client_fd]() {
+      Connection conn(client_fd, cache_, ttl_, aof_, running_,
+                      active_connections_);
+      conn.handle();
+    }).detach();
   }
 }
 
 // ---------------------------------------------------------------------------
-// stop: flip flag → unblock accept → join cleanup thread
+// stop: flip flag → unblock accept → drain active clients → join cleanup
 // ---------------------------------------------------------------------------
 void Server::stop() {
   running_ = false;
+
   if (server_fd_ >= 0) {
     // shutdown() unblocks any thread blocked on accept()
     shutdown(server_fd_, SHUT_RDWR);
     close(server_fd_);
     server_fd_ = -1;
   }
+
+  // Wait for active client threads to finish (bounded drain)
+  int waited_ms = 0;
+  while (active_connections_ > 0 && waited_ms < SHUTDOWN_DRAIN_TIMEOUT_MS) {
+    std::this_thread::sleep_for(
+        std::chrono::milliseconds(SHUTDOWN_DRAIN_POLL_MS));
+    waited_ms += SHUTDOWN_DRAIN_POLL_MS;
+  }
+
+  if (active_connections_ > 0) {
+    std::cerr << "Warning: " << active_connections_.load()
+              << " client(s) still active after shutdown timeout\n";
+  }
+
   if (cleanup_thread_.joinable()) {
     cleanup_thread_.join();
   }
 }
 
 // ---------------------------------------------------------------------------
-// handle_client: read lines → parse → execute → send response
+// active_connections: public accessor for connection counter
 // ---------------------------------------------------------------------------
-void Server::handle_client(int client_fd) {
-  char buffer[RECV_BUFFER_SIZE];
-  std::string leftover;
-
-  while (running_) {
-    ssize_t bytes_read = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
-    if (bytes_read <= 0) {
-      break; // client disconnected or read error
-    }
-
-    buffer[bytes_read] = '\0';
-    leftover += buffer;
-
-    // Process all complete lines (delimited by \n or \r\n)
-    std::string::size_type pos = 0;
-    while ((pos = leftover.find('\n')) != std::string::npos) {
-      std::string line = leftover.substr(0, pos);
-      leftover.erase(0, pos + 1);
-
-      // Strip trailing \r if present (handles \r\n from telnet/nc)
-      if (!line.empty() && line.back() == '\r') {
-        line.pop_back();
-      }
-      if (line.empty()) {
-        continue;
-      }
-
-      Command cmd = CommandParser::parse(line);
-      std::string response = execute_command(cmd);
-
-      // Log write commands to AOF (reads are never logged)
-      if (cmd.valid && (cmd.type == CommandType::SET ||
-                        cmd.type == CommandType::DEL ||
-                        cmd.type == CommandType::TTL)) {
-        aof_.log_command(line);
-      }
-
-      ssize_t sent = send(client_fd, response.c_str(), response.size(), 0);
-      if (sent < 0) {
-        return; // write error — drop this client
-      }
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// execute_command: dispatch to cache/ttl, return Redis-style response
-// ---------------------------------------------------------------------------
-//   +OK\r\n          — success
-//   $<len>\r\n<val>\r\n — string value
-//   $-1\r\n          — key not found
-//   :<int>\r\n       — integer (EXISTS)
-//   -ERR msg\r\n     — error
-// ---------------------------------------------------------------------------
-std::string Server::execute_command(const Command &cmd) {
-  if (!cmd.valid) {
-    return "-" + cmd.error_msg + "\r\n";
-  }
-
-  switch (cmd.type) {
-  case CommandType::SET:
-    cache_.put(cmd.args[0], cmd.args[1]);
-    return "+OK\r\n";
-
-  case CommandType::GET: {
-    const std::string &key = cmd.args[0];
-    // Lazy TTL check — expired keys return miss
-    if (ttl_.is_expired(key)) {
-      (void)cache_.del(key);
-      ttl_.remove(key);
-      return "$-1\r\n";
-    }
-    auto val = cache_.get(key);
-    if (!val.has_value()) {
-      return "$-1\r\n";
-    }
-    return "$" + std::to_string(val->size()) + "\r\n" + *val + "\r\n";
-  }
-
-  case CommandType::DEL: {
-    const std::string &key = cmd.args[0];
-    ttl_.remove(key);
-    bool deleted = cache_.del(key);
-    return deleted ? "+OK\r\n" : "$-1\r\n";
-  }
-
-  case CommandType::TTL: {
-    const std::string &key = cmd.args[0];
-    int seconds = std::stoi(cmd.args[1]);
-    ttl_.set_expiry(key, seconds);
-    return "+OK\r\n";
-  }
-
-  case CommandType::EXISTS: {
-    const std::string &key = cmd.args[0];
-    // Lazy TTL check before existence test
-    if (ttl_.is_expired(key)) {
-      (void)cache_.del(key);
-      ttl_.remove(key);
-      return ":0\r\n";
-    }
-    auto val = cache_.get(key);
-    return val.has_value() ? ":1\r\n" : ":0\r\n";
-  }
-
-  case CommandType::PING:
-    return "+PONG\r\n";
-
-  case CommandType::UNKNOWN:
-  default:
-    return "-ERR unknown command\r\n";
-  }
-}
+int Server::active_connections() const { return active_connections_.load(); }

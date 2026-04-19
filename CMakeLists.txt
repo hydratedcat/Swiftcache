@@ -12,6 +12,7 @@ add_compile_options(-O2 -Wall -Wextra -pthread)
 add_executable(swiftcache
     src/server/main.cpp
     src/server/server.cpp
+    src/server/connection.cpp
     src/core/store.cpp
     src/core/lru.cpp
     src/core/ttl.cpp
@@ -28,10 +29,14 @@ add_executable(run_tests
     tests/test_lru.cpp
     tests/test_parser.cpp
     tests/test_ttl.cpp
+    tests/test_server.cpp
     src/core/store.cpp
     src/core/lru.cpp
     src/core/ttl.cpp
     src/parser/command.cpp
+    src/server/server.cpp
+    src/server/connection.cpp
+    src/persistence/aof.cpp
 )
 target_link_libraries(run_tests GTest::GTest GTest::Main pthread)
 add_test(NAME SwiftCacheTests COMMAND run_tests)
