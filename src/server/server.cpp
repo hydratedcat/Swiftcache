@@ -68,6 +68,9 @@ void Server::start() {
   setup_socket();
   running_ = true;
 
+  // Replay AOF log to restore cache state from previous session
+  replay_aof();
+
   std::cout << "SwiftCache listening on port " << port_ << "\n";
 
   // Background TTL cleanup sweep — runs every 1s
@@ -134,3 +137,48 @@ void Server::stop() {
 // active_connections: public accessor for connection counter
 // ---------------------------------------------------------------------------
 int Server::active_connections() const { return active_connections_.load(); }
+
+// ---------------------------------------------------------------------------
+// replay_aof: read AOF log → parse → execute directly (skip re-logging)
+// ---------------------------------------------------------------------------
+void Server::replay_aof() {
+  AOFReader reader(aof_.filepath());
+  std::vector<std::string> commands = reader.read_all_commands();
+
+  if (commands.empty()) {
+    return;
+  }
+
+  int replayed = 0;
+  for (const auto &cmd_str : commands) {
+    Command cmd = CommandParser::parse(cmd_str);
+    if (!cmd.valid) {
+      continue; // skip malformed lines
+    }
+
+    // Execute write commands directly against cache/TTL
+    switch (cmd.type) {
+    case CommandType::SET:
+      cache_.put(cmd.args[0], cmd.args[1]);
+      ++replayed;
+      break;
+    case CommandType::DEL:
+      ttl_.remove(cmd.args[0]);
+      (void)cache_.del(cmd.args[0]);
+      ++replayed;
+      break;
+    case CommandType::TTL: {
+      int seconds = std::stoi(cmd.args[1]);
+      ttl_.set_expiry(cmd.args[0], seconds);
+      ++replayed;
+      break;
+    }
+    default:
+      break; // ignore read-only commands in log
+    }
+  }
+
+  std::cout << "AOF: replayed " << replayed << " command(s) from "
+            << aof_.filepath() << "\n";
+}
+

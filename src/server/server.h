@@ -36,4 +36,8 @@ private:
   std::thread cleanup_thread_;
 
   void setup_socket();
+
+  /// Replays the AOF log to restore cache state from disk.
+  void replay_aof();
 };
+

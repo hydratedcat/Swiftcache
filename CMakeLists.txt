@@ -30,6 +30,7 @@ add_executable(run_tests
     tests/test_parser.cpp
     tests/test_ttl.cpp
     tests/test_server.cpp
+    tests/test_aof.cpp
     src/core/store.cpp
     src/core/lru.cpp
     src/core/ttl.cpp
