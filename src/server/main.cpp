@@ -5,6 +5,7 @@
 
 namespace {
 constexpr int DEFAULT_PORT = 6380;
+constexpr int DEFAULT_GRPC_PORT = 6381;
 constexpr size_t DEFAULT_CACHE_CAPACITY = 10000;
 
 // Global pointer for signal handler — the only way POSIX signals can reach
@@ -20,7 +21,7 @@ void signal_handler(int /*signum*/) {
 }
 
 int main() {
-  Server server(DEFAULT_PORT, DEFAULT_CACHE_CAPACITY);
+  Server server(DEFAULT_PORT, DEFAULT_CACHE_CAPACITY, DEFAULT_GRPC_PORT);
   g_server = &server;
 
   std::signal(SIGINT, signal_handler);

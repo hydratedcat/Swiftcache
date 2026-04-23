@@ -24,8 +24,9 @@ constexpr int SHUTDOWN_DRAIN_TIMEOUT_MS = 5000;
 // ---------------------------------------------------------------------------
 // Constructor / Destructor
 // ---------------------------------------------------------------------------
-Server::Server(int port, size_t cache_capacity)
-    : port_(port), cache_(cache_capacity), aof_("swiftcache.aof") {}
+Server::Server(int port, size_t cache_capacity, int grpc_port)
+    : port_(port), grpc_port_(grpc_port), cache_(cache_capacity),
+      aof_("swiftcache.aof") {}
 
 Server::~Server() { stop(); }
 
@@ -62,6 +63,45 @@ void Server::setup_socket() {
 }
 
 // ---------------------------------------------------------------------------
+// start_grpc: build and launch gRPC server on a background thread
+// ---------------------------------------------------------------------------
+void Server::start_grpc() {
+  if (grpc_port_ <= 0) {
+    return; // gRPC disabled
+  }
+
+  grpc_service_ = std::make_unique<CacheServiceImpl>(cache_, ttl_, aof_);
+
+  grpc::ServerBuilder builder;
+  builder.AddListeningPort("0.0.0.0:" + std::to_string(grpc_port_),
+                           grpc::InsecureServerCredentials());
+  builder.RegisterService(grpc_service_.get());
+
+  grpc_server_ = builder.BuildAndStart();
+  if (!grpc_server_) {
+    throw std::runtime_error("Failed to start gRPC server on port " +
+                             std::to_string(grpc_port_));
+  }
+
+  std::cout << "SwiftCache gRPC listening on port " << grpc_port_ << "\n";
+
+  // Run gRPC event loop on its own thread — Wait() blocks until Shutdown()
+  grpc_thread_ = std::thread([this]() { grpc_server_->Wait(); });
+}
+
+// ---------------------------------------------------------------------------
+// stop_grpc: shutdown gRPC server and join its thread
+// ---------------------------------------------------------------------------
+void Server::stop_grpc() {
+  if (grpc_server_) {
+    grpc_server_->Shutdown();
+  }
+  if (grpc_thread_.joinable()) {
+    grpc_thread_.join();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // start: bind socket, launch TTL cleanup thread, multi-threaded accept loop
 // ---------------------------------------------------------------------------
 void Server::start() {
@@ -71,7 +111,10 @@ void Server::start() {
   // Replay AOF log to restore cache state from previous session
   replay_aof();
 
-  std::cout << "SwiftCache listening on port " << port_ << "\n";
+  // Start gRPC server (if port configured)
+  start_grpc();
+
+  std::cout << "SwiftCache TCP listening on port " << port_ << "\n";
 
   // Background TTL cleanup sweep — runs every 1s
   cleanup_thread_ = std::thread([this]() {
@@ -108,6 +151,9 @@ void Server::start() {
 void Server::stop() {
   running_ = false;
 
+  // Stop gRPC server first
+  stop_grpc();
+
   if (server_fd_ >= 0) {
     // shutdown() unblocks any thread blocked on accept()
     shutdown(server_fd_, SHUT_RDWR);
@@ -137,6 +183,11 @@ void Server::stop() {
 // active_connections: public accessor for connection counter
 // ---------------------------------------------------------------------------
 int Server::active_connections() const { return active_connections_.load(); }
+
+// ---------------------------------------------------------------------------
+// grpc_port: public accessor for gRPC port
+// ---------------------------------------------------------------------------
+int Server::grpc_port() const { return grpc_port_; }
 
 // ---------------------------------------------------------------------------
 // replay_aof: read AOF log → parse → execute directly (skip re-logging)
@@ -181,4 +232,3 @@ void Server::replay_aof() {
   std::cout << "AOF: replayed " << replayed << " command(s) from "
             << aof_.filepath() << "\n";
 }
-
