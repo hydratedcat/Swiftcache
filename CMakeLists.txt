@@ -96,3 +96,29 @@ target_link_libraries(run_tests
     ${GRPC_LIBRARIES}
 )
 add_test(NAME SwiftCacheTests COMMAND run_tests)
+
+# ---------------------------------------------------------------------------
+# Benchmarks (Google Benchmark)
+# ---------------------------------------------------------------------------
+find_package(benchmark REQUIRED)
+
+add_executable(bench
+    benchmarks/bench_store.cpp
+    src/core/lru.cpp
+)
+target_link_libraries(bench
+    benchmark::benchmark
+    pthread
+)
+
+# Custom target: cmake --build . --target run_bench
+# Runs the benchmark and saves output to benchmarks/bench_output.txt
+add_custom_target(run_bench
+    COMMAND bench
+        --benchmark_out=${CMAKE_SOURCE_DIR}/benchmarks/bench_output.txt
+        --benchmark_out_format=console
+    DEPENDS bench
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    COMMENT "Running Google Benchmark suite..."
+    VERBATIM
+)
