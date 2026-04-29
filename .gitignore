@@ -28,3 +28,4 @@ Thumbs.db
 # Benchmark output
 benchmark_results.json
 results.json
+benchmarks/bench_output.txt
