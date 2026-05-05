@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake pkg-config \
+            libgtest-dev libbenchmark-dev \
+            libgrpc++-dev libprotobuf-dev \
+            protobuf-compiler-grpc
+
+      - name: Configure CMake (Release)
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build all targets
+        run: cmake --build build --parallel $(nproc)
+
+      - name: Run tests
+        run: |
+          cd build
+          ctest --verbose --output-on-failure
+
+      - name: Run benchmarks (smoke test)
+        run: ./build/bench --benchmark_min_time=0.1s
+
+  sanitizer-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake pkg-config \
+            libgtest-dev libbenchmark-dev \
+            libgrpc++-dev libprotobuf-dev \
+            protobuf-compiler-grpc
+
+      - name: Configure CMake (ASan + UBSan)
+        run: cmake -B build_asan -DCMAKE_BUILD_TYPE=Asan
+
+      - name: Build tests (sanitizer)
+        run: cmake --build build_asan --target run_tests --parallel $(nproc)
+
+      - name: Run tests under sanitizers
+        run: |
+          cd build_asan
+          ./run_tests --gtest_color=yes
