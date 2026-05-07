@@ -3,7 +3,7 @@
 LRUCache::LRUCache(size_t capacity) : capacity_(capacity) {}
 
 void LRUCache::put(const std::string &key, const std::string &value) {
-  std::lock_guard<std::mutex> lock(mutex_);
+  std::unique_lock<std::shared_mutex> lock(mutex_);
   auto it = cache_map_.find(key);
   if (it != cache_map_.end()) {
     // Key exists: update in-place, splice to front (O(1), no copy)
@@ -19,7 +19,8 @@ void LRUCache::put(const std::string &key, const std::string &value) {
 }
 
 std::optional<std::string> LRUCache::get(const std::string &key) {
-  std::lock_guard<std::mutex> lock(mutex_);
+  // Exclusive lock required: splice() mutates the list (LRU promotion)
+  std::unique_lock<std::shared_mutex> lock(mutex_);
   auto it = cache_map_.find(key);
   if (it == cache_map_.end()) {
     return std::nullopt;
@@ -30,7 +31,7 @@ std::optional<std::string> LRUCache::get(const std::string &key) {
 }
 
 bool LRUCache::del(const std::string &key) {
-  std::lock_guard<std::mutex> lock(mutex_);
+  std::unique_lock<std::shared_mutex> lock(mutex_);
   auto it = cache_map_.find(key);
   if (it == cache_map_.end()) {
     return false;
@@ -41,7 +42,7 @@ bool LRUCache::del(const std::string &key) {
 }
 
 size_t LRUCache::size() const {
-  std::lock_guard<std::mutex> lock(mutex_);
+  std::shared_lock<std::shared_mutex> lock(mutex_);
   return cache_list_.size();
 }
 

@@ -1,6 +1,7 @@
 #pragma once
 #include <chrono>
 #include <mutex>
+#include <shared_mutex>
 #include <string>
 #include <unordered_map>
 
@@ -17,5 +18,5 @@ public:
 private:
   std::unordered_map<std::string, std::chrono::steady_clock::time_point>
       expiry_map_;
-  mutable std::mutex mutex_;
+  mutable std::shared_mutex mutex_;
 };

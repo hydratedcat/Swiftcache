@@ -33,7 +33,7 @@ TEST(LRUTest, EvictsLeastRecentlyUsed) {
   cache.put("b", "2");
 
   // Act: access "a" → "b" becomes LRU; insert "c" → evicts "b"
-  cache.get("a");
+  (void)cache.get("a");
   cache.put("c", "3");
 
   // Assert
@@ -49,7 +49,7 @@ TEST(LRUTest, GetUpdatesRecency) {
   cache.put("y", "20");
 
   // Act: access "x" → "y" becomes LRU; insert "z" → evicts "y"
-  cache.get("x");
+  (void)cache.get("x");
   cache.put("z", "30");
 
   // Assert

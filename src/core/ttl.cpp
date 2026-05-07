@@ -4,13 +4,13 @@
 #include <vector>
 
 void TTLManager::set_expiry(const std::string &key, int seconds) {
-  std::lock_guard<std::mutex> lock(mutex_);
+  std::unique_lock<std::shared_mutex> lock(mutex_);
   expiry_map_[key] =
       std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
 }
 
 bool TTLManager::is_expired(const std::string &key) const {
-  std::lock_guard<std::mutex> lock(mutex_);
+  std::shared_lock<std::shared_mutex> lock(mutex_);
   auto it = expiry_map_.find(key);
   if (it == expiry_map_.end()) {
     return false; // no TTL set → never expires
@@ -19,7 +19,7 @@ bool TTLManager::is_expired(const std::string &key) const {
 }
 
 void TTLManager::remove(const std::string &key) {
-  std::lock_guard<std::mutex> lock(mutex_);
+  std::unique_lock<std::shared_mutex> lock(mutex_);
   expiry_map_.erase(key);
 }
 
@@ -28,7 +28,7 @@ void TTLManager::cleanup_expired(LRUCache &cache) {
   // to avoid lock-order inversion (LRUCache has its own mutex).
   std::vector<std::string> expired_keys;
   {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::shared_mutex> lock(mutex_);
     auto now = std::chrono::steady_clock::now();
     for (const auto &[key, expiry_time] : expiry_map_) {
       if (now > expiry_time) {

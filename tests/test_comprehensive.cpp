@@ -180,8 +180,7 @@ TEST(CompLRUTest, ConcurrentMixedReadWrite) {
   for (int t = 0; t < 10; ++t) {
     threads.emplace_back([&cache, t, &errors]() {
       for (int i = 0; i < 1000; ++i) {
-        std::string key =
-            "t" + std::to_string(t) + "_k" + std::to_string(i);
+        std::string key = "t" + std::to_string(t) + "_k" + std::to_string(i);
         cache.put(key, "val");
         auto val = cache.get(key);
         if (!val.has_value()) {
@@ -189,7 +188,7 @@ TEST(CompLRUTest, ConcurrentMixedReadWrite) {
         }
         // Delete half the keys
         if (i % 2 == 0) {
-          cache.del(key);
+          (void)cache.del(key);
         }
       }
     });
@@ -342,8 +341,7 @@ TEST(CompTTLTest, ConcurrentSetExpiryAndCheck) {
   for (int t = 0; t < 5; ++t) {
     threads.emplace_back([&ttl, t]() {
       for (int i = 0; i < 100; ++i) {
-        std::string key =
-            "k_" + std::to_string(t) + "_" + std::to_string(i);
+        std::string key = "k_" + std::to_string(t) + "_" + std::to_string(i);
         ttl.set_expiry(key, 60); // 60s — won't expire during test
       }
     });
@@ -506,11 +504,11 @@ TEST_F(CompAOFTest, FullPipelineSetTTLDelReplay) {
   }
 
   // Verify state after replay
-  EXPECT_EQ(cache.get("user"), std::nullopt);     // DEL'd
-  EXPECT_EQ(cache.get("session"), "abc123");       // still valid (TTL 3600s)
-  EXPECT_FALSE(ttl.is_expired("session"));         // TTL hasn't expired
-  EXPECT_EQ(cache.get("config"), "maxconn");       // present
-  EXPECT_EQ(cache.size(), 2u);                     // session + config
+  EXPECT_EQ(cache.get("user"), std::nullopt); // DEL'd
+  EXPECT_EQ(cache.get("session"), "abc123");  // still valid (TTL 3600s)
+  EXPECT_FALSE(ttl.is_expired("session"));    // TTL hasn't expired
+  EXPECT_EQ(cache.get("config"), "maxconn");  // present
+  EXPECT_EQ(cache.size(), 2u);                // session + config
 }
 
 TEST(CompIntegrationTest, LazyExpiryOnGet) {
@@ -568,8 +566,7 @@ TEST(CompStressTest, ConcurrentLRUEvictionUnderLoad) {
   for (int t = 0; t < 10; ++t) {
     threads.emplace_back([&cache, t]() {
       for (int i = 0; i < 1000; ++i) {
-        std::string key =
-            "t" + std::to_string(t) + "_k" + std::to_string(i);
+        std::string key = "t" + std::to_string(t) + "_k" + std::to_string(i);
         cache.put(key, "val");
         // Some keys will have been evicted already — that's fine
         (void)cache.get(key);
@@ -616,7 +613,7 @@ TEST(CompStressTest, ConcurrentTTLCleanupWithReads) {
         std::string key = "key" + std::to_string(i % 1000);
         // Lazy check (mimics server path)
         if (ttl.is_expired(key)) {
-          cache.del(key);
+          (void)cache.del(key);
           ttl.remove(key);
         } else {
           (void)cache.get(key);
